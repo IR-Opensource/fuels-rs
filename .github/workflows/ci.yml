@@ -30,6 +30,13 @@ jobs:
   setup-test-projects:
     runs-on: warp-ubuntu-latest-x64-4x
     steps:
+      # ============= InvisiRisk Setup =============
+      - name: Setup PSE
+        uses: invisirisk/pse-action@develop
+        with:
+          api_url: "https://app.dev.invisirisk.com"   
+          app_token: ${{secrets.IR_API_KEY}}
+      # ============= InvisiRisk Setup End =============
       - uses: actions/checkout@v6
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@master
@@ -70,6 +77,14 @@ jobs:
           path: |
             e2e/sway/**/out/*
 
+      # ============= InvisiRisk Cleanup =============
+      - name: Cleanup PSE
+        if: always()
+        uses: invisirisk/pse-action@develop
+        with:
+          cleanup: "true"
+      # ============= InvisiRisk Cleanup End =============
+
   get-workspace-members:
     runs-on: warp-ubuntu-latest-x64-4x
     outputs:
@@ -103,6 +118,13 @@ jobs:
   fetch-fuel-core:
     runs-on: warp-ubuntu-latest-x64-4x
     steps:
+      # ============= InvisiRisk Setup =============
+      - name: Setup PSE
+        uses: invisirisk/pse-action@develop
+        with:
+          api_url: "https://app.dev.invisirisk.com"   
+          app_token: ${{secrets.IR_API_KEY}}
+      # ============= InvisiRisk Setup End =============
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -132,6 +154,14 @@ jobs:
           name: fuel-core
           path: fuel-core-install/bin/fuel-core
 
+      # ============= InvisiRisk Cleanup =============
+      - name: Cleanup PSE
+        if: always()
+        uses: invisirisk/pse-action@develop
+        with:
+          cleanup: "true"
+      # ============= InvisiRisk Cleanup End =============
+
   # Ensure workspace is publishable
   publish-crates-check:
     runs-on: warp-ubuntu-latest-x64-4x
@@ -149,6 +179,14 @@ jobs:
           dry-run: true
           check-repo: false
           ignore-unpublished-changes: true
+
+      # ============= InvisiRisk Cleanup =============
+      - name: Cleanup PSE
+        if: always()
+        uses: invisirisk/pse-action@develop
+        with:
+          cleanup: "true"
+      # ============= InvisiRisk Cleanup End =============
 
   cargo-verifications:
     needs:
@@ -192,6 +230,13 @@ jobs:
           - command: check_typos
             args:
     steps:
+      # ============= InvisiRisk Setup =============
+      - name: Setup PSE
+        uses: invisirisk/pse-action@develop
+        with:
+          api_url: "https://app.dev.invisirisk.com"   
+          app_token: ${{secrets.IR_API_KEY}}
+      # ============= InvisiRisk Setup End =============
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
@@ -274,6 +319,14 @@ jobs:
         if: ${{ matrix.command == 'check_typos' }}
         uses: crate-ci/typos@v1.29.5
 
+      # ============= InvisiRisk Cleanup =============
+      - name: Cleanup PSE
+        if: always()
+        uses: invisirisk/pse-action@develop
+        with:
+          cleanup: "true"
+      # ============= InvisiRisk Cleanup End =============
+
   publish:
     needs:
       - cargo-verifications
@@ -283,6 +336,12 @@ jobs:
     runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
+      # ============= InvisiRisk Setup =============
+      - name: Setup PSE
+        uses: invisirisk/pse-action@develop
+        with:
+          api_url: "https://app.dev.invisirisk.com"
+      # ============= InvisiRisk Setup End =============
       - name: Checkout repository
         uses: actions/checkout@v6
 
@@ -300,3 +359,11 @@ jobs:
         with:
           publish-delay: 30000
           registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      # ============= InvisiRisk Cleanup =============
+      - name: Cleanup PSE
+        if: always()
+        uses: invisirisk/pse-action@develop
+        with:
+          cleanup: "true"
+      # ============= InvisiRisk Cleanup End =============
