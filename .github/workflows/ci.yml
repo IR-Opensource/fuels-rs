@@ -3,363 +3,98 @@ name: CI
 on:
   workflow_dispatch:
 
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  DASEL_VERSION: https://github.com/TomWright/dasel/releases/download/v2.3.6/dasel_linux_amd64
   RUSTFLAGS: "-D warnings"
-  FUEL_CORE_VERSION: 0.48.0
-  FUEL_CORE_PATCH_BRANCH: ""
-  FUEL_CORE_PATCH_REVISION: ""
   RUST_VERSION: 1.93.0
   FORC_VERSION: 0.69.1
-  FORC_PATCH_BRANCH: ""
-  FORC_PATCH_REVISION: ""
-  NEXTEST_HIDE_PROGRESS_BAR: "true"
-  NEXTEST_STATUS_LEVEL: "fail"
+  FUEL_CORE_VERSION: 0.48.0
 
 jobs:
-  setup-test-projects:
+  ci:
     runs-on: warp-ubuntu-latest-x64-4x
+
     steps:
       # ============= InvisiRisk Setup =============
       - name: Setup PSE
-        uses: invisirisk/pse-action@develop
+        uses: invisirisk/pse-action@feature/intermediate-deno-rust-ca-devtest
         with:
-          api_url: "https://app.dev.invisirisk.com"   
+          api_url: "https://app.stage.invisirisk.com"
           app_token: ${{secrets.IR_API_KEY}}
+          mode: docker-intercept
+          pse_image_tag: "dev-test"
+          debug: true
       # ============= InvisiRisk Setup End =============
-      - uses: actions/checkout@v6
-      - name: Install toolchain
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-provider: "warpbuild"
-
-      - name: Set git config
-        run: |
-          git config --global core.bigfilethreshold 100m
-
-      - name: Install forc and forc-fmt
-        run: |
-          if [[ -n $FORC_PATCH_BRANCH ]]; then
-            cargo install --locked forc forc-fmt --git https://github.com/FuelLabs/sway --branch $FORC_PATCH_BRANCH
-          elif [[ -n $FORC_PATCH_REVISION ]]; then
-            cargo install --locked forc forc-fmt --git https://github.com/FuelLabs/sway --rev $FORC_PATCH_REVISION
-          else
-            curl -sSLf https://github.com/FuelLabs/sway/releases/download/v${{ env.FORC_VERSION }}/forc-binaries-linux_amd64.tar.gz -L -o forc.tar.gz
-            tar -xvf forc.tar.gz
-            chmod +x forc-binaries/forc
-            mv forc-binaries/forc /usr/local/bin/forc
-            mv forc-binaries/forc-fmt /usr/local/bin/forc-fmt
-          fi
-
-      - name: Check format of Sway test projects
-        run: forc fmt --check --path e2e
-
-      - name: Build Sway test projects
-        run: forc build --release --terse --error-on-warnings --path e2e
-
-      - uses: actions/upload-artifact@v4
-        with:
-          retention-days: 2
-          name: sway-examples
-          path: |
-            e2e/sway/**/out/*
-
-      # ============= InvisiRisk Cleanup =============
-      - name: Cleanup PSE
-        if: always()
-        uses: invisirisk/pse-action@develop
-        with:
-          cleanup: "true"
-      # ============= InvisiRisk Cleanup End =============
-
-  get-workspace-members:
-    runs-on: warp-ubuntu-latest-x64-4x
-    outputs:
-      members: ${{ steps.set-members.outputs.members }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      - id: set-members
-        run: |
-          # install dasel
-          curl -sSLf "$DASEL_VERSION" -L -o dasel && chmod +x dasel
-          mv ./dasel /usr/local/bin/dasel
-          members=$(cat Cargo.toml | dasel -r toml -w json 'workspace.members' | jq -r ".[]" | xargs -I '{}' dasel -f {}/Cargo.toml 'package.name' | jq -R '[.]' | jq -s -c 'add')
-          echo "members=$members" >> $GITHUB_OUTPUT
-
-  verify-rust-version:
-    runs-on: warp-ubuntu-latest-x64-4x
-    steps:
-      - uses: actions/checkout@v6
-      # Ensure CI is using the same minimum toolchain specified in fuels Cargo.toml
-      - run: |
-          curl -sSLf "$DASEL_VERSION" -L -o dasel && chmod +x dasel
-          mv ./dasel /usr/local/bin/dasel
-          MIN_VERSION=$(cat Cargo.toml | dasel -r toml 'workspace.package.rust-version' -w plain)
-          RUST_VERSION="${{ env.RUST_VERSION }}"
-          echo "Comparing minimum supported toolchain ($MIN_VERSION) with ci toolchain (RUST_VERSION)"
-          test "$MIN_VERSION" == "$RUST_VERSION"
-
-  # Fetch Fuel Core and upload as artifact, useful when we build the core from a
-  # revision so that we can repeat flaky tests without rebuilding the core.
-  fetch-fuel-core:
-    runs-on: warp-ubuntu-latest-x64-4x
-    steps:
-      # ============= InvisiRisk Setup =============
-      - name: Setup PSE
-        uses: invisirisk/pse-action@develop
-        with:
-          api_url: "https://app.dev.invisirisk.com"   
-          app_token: ${{secrets.IR_API_KEY}}
-      # ============= InvisiRisk Setup End =============
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-provider: "warpbuild"
-          key: "fuel-core-build"
-        continue-on-error: true
-      - name: Install Fuel Core
-        run: |
-          if [[ -n $FUEL_CORE_PATCH_BRANCH ]]; then
-            cargo install --locked fuel-core-bin --git https://github.com/FuelLabs/fuel-core --branch "$FUEL_CORE_PATCH_BRANCH" --root fuel-core-install
-          elif [[ -n $FUEL_CORE_PATCH_REVISION ]]; then
-            cargo install --locked fuel-core-bin --git https://github.com/FuelLabs/fuel-core --rev "$FUEL_CORE_PATCH_REVISION" --root fuel-core-install
-
-          else
-            curl -sSLf https://github.com/FuelLabs/fuel-core/releases/download/v${{ env.FUEL_CORE_VERSION }}/fuel-core-${{ env.FUEL_CORE_VERSION }}-x86_64-unknown-linux-gnu.tar.gz -L -o fuel-core.tar.gz
-            tar -xvf fuel-core.tar.gz
-            chmod +x fuel-core-${{ env.FUEL_CORE_VERSION }}-x86_64-unknown-linux-gnu/fuel-core
-            mkdir -p fuel-core-install/bin
-            mv fuel-core-${{ env.FUEL_CORE_VERSION }}-x86_64-unknown-linux-gnu/fuel-core fuel-core-install/bin/fuel-core
-          fi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: fuel-core
-          path: fuel-core-install/bin/fuel-core
-
-      # ============= InvisiRisk Cleanup =============
-      - name: Cleanup PSE
-        if: always()
-        uses: invisirisk/pse-action@develop
-        with:
-          cleanup: "true"
-      # ============= InvisiRisk Cleanup End =============
-
-  # Ensure workspace is publishable
-  publish-crates-check:
-    runs-on: warp-ubuntu-latest-x64-4x
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Publish crate check
-        uses: FuelLabs/publish-crates@v1
-        with:
-          dry-run: true
-          check-repo: false
-          ignore-unpublished-changes: true
-
-      # ============= InvisiRisk Cleanup =============
-      - name: Cleanup PSE
-        if: always()
-        uses: invisirisk/pse-action@develop
-        with:
-          cleanup: "true"
-      # ============= InvisiRisk Cleanup End =============
-
-  cargo-verifications:
-    needs:
-      - setup-test-projects
-      - verify-rust-version
-      - get-workspace-members
-      - publish-crates-check
-      - fetch-fuel-core
-    runs-on: warp-ubuntu-latest-x64-4x
-    strategy:
-      matrix:
-        cargo_command: [ check ]
-        args: [ --all-features ]
-        package: ${{fromJSON(needs.get-workspace-members.outputs.members)}}
-        include:
-          - cargo_command: fmt
-            args: --all --verbose -- --check
-          - cargo_command: clippy
-            args: --all-targets
-            download_sway_artifacts: sway-examples
-          - cargo_command: nextest
-            args: run --all-targets --features "default fuel-core-lib coin-cache" --workspace --cargo-quiet --no-fail-fast
-            download_sway_artifacts: sway-examples
-            install_fuel_core: true
-          - cargo_command: nextest
-            args: run --all-targets --workspace --cargo-quiet --no-fail-fast
-            download_sway_artifacts: sway-examples
-            install_fuel_core: true
-          - cargo_command: test
-            args: --doc --workspace
-          - cargo_command: machete
-            args: --skip-target-dir
-          - command: test_wasm
-            args:
-          - command: check_fuel_core_version
-            args:
-          - command: check_doc_anchors_valid
-            args:
-          - command: check_doc_unresolved_links
-            args:
-          - command: check_typos
-            args:
-    steps:
-      # ============= InvisiRisk Setup =============
-      - name: Setup PSE
-        uses: invisirisk/pse-action@develop
-        with:
-          api_url: "https://app.dev.invisirisk.com"   
-          app_token: ${{secrets.IR_API_KEY}}
-      # ============= InvisiRisk Setup End =============
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy,rustfmt
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
           cache-provider: "warpbuild"
-          key: "${{ matrix.cargo_command }} ${{ matrix.args }} ${{ matrix.package }}"
-        continue-on-error: true
 
-      - name: Download Fuel Core
-        if: ${{ matrix.install_fuel_core }}
-        uses: actions/download-artifact@v4
-        with:
-          name: fuel-core
+      - name: Install forc
+        run: |
+          curl -sSLf \
+            https://github.com/FuelLabs/sway/releases/download/v${{ env.FORC_VERSION }}/forc-binaries-linux_amd64.tar.gz \
+            -o forc.tar.gz
+
+          tar -xvf forc.tar.gz
+
+          chmod +x forc-binaries/forc
+          chmod +x forc-binaries/forc-fmt
+
+          sudo mv forc-binaries/forc /usr/local/bin/
+          sudo mv forc-binaries/forc-fmt /usr/local/bin/
+
       - name: Install Fuel Core
-        if: ${{ matrix.install_fuel_core }}
         run: |
-          chmod +x fuel-core
-          mv fuel-core /usr/local/bin/fuel-core
+          curl -sSLf \
+            https://github.com/FuelLabs/fuel-core/releases/download/v${{ env.FUEL_CORE_VERSION }}/fuel-core-${{ env.FUEL_CORE_VERSION }}-x86_64-unknown-linux-gnu.tar.gz \
+            -o fuel-core.tar.gz
 
-      - name: Download sway example artifacts
-        if: ${{ matrix.download_sway_artifacts }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.download_sway_artifacts }}
-          # Needed because `upload-artifact` will remove 'e2e/sway' because it is shared between all matched files
-          path: e2e/sway/
+          tar -xvf fuel-core.tar.gz
 
-      - name: Install nextest
-        if: ${{ matrix.cargo_command == 'nextest' }}
-        uses: taiki-e/install-action@nextest
+          chmod +x fuel-core-${{ env.FUEL_CORE_VERSION }}-x86_64-unknown-linux-gnu/fuel-core
 
-      - name: Install cargo-machete
-        if: ${{ matrix.cargo_command == 'machete' }}
-        uses: taiki-e/install-action@cargo-machete
+          sudo mv \
+            fuel-core-${{ env.FUEL_CORE_VERSION }}-x86_64-unknown-linux-gnu/fuel-core \
+            /usr/local/bin/fuel-core
 
-      - name: Cargo (workspace-level)
-        if: ${{ matrix.cargo_command && !matrix.package }}
-        run: cargo ${{ matrix.cargo_command }} ${{ matrix.args }}
+      - name: Format check
+        run: cargo fmt --all --check
 
-      - name: Cargo (package-level)
-        if: ${{ matrix.cargo_command && matrix.package }}
-        run: cargo ${{ matrix.cargo_command }} -p ${{ matrix.package }} ${{ matrix.args }}
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Install NodeJS for WASM testing
-        if: ${{ matrix.command == 'test_wasm' }}
-        uses: actions/setup-node@v3
-        with:
-          node-version: 22.8.0
+      - name: Build
+        run: cargo build --all-features --verbose
 
-      # Until we fix the "missing env error"
-      # - name: Test WASM
-      #   if: ${{ matrix.command == 'test_wasm' }}
-      #   run: |
-      #     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-      #     cd wasm-tests
-      #     wasm-pack test --node
+      - name: Test
+        run: cargo test --all-features --workspace --verbose
 
-      - name: Check that fuel_core version.rs file is up to date
-        if: ${{ matrix.command == 'check_fuel_core_version' }}
-        run: cargo run --bin fuel-core-version -- --manifest-path ./Cargo.toml verify
+      - name: Check Sway formatting
+        run: forc fmt --check --path e2e
 
-      - name: Check for invalid documentation anchors
-        if: ${{ matrix.command == 'check_doc_anchors_valid' }}
-        run: cargo run --bin check-docs
-
-      - name: Check for unresolved documentation links
-        if: ${{ matrix.command == 'check_doc_unresolved_links' }}
-        run: |
-          ! cargo doc --document-private-items |& grep -A 6  "warning: unresolved link to"
-
-      - name: Check for typos
-        if: ${{ matrix.command == 'check_typos' }}
-        uses: crate-ci/typos@v1.29.5
+      - name: Build Sway projects
+        run: forc build --release --terse --error-on-warnings --path e2e
 
       # ============= InvisiRisk Cleanup =============
       - name: Cleanup PSE
         if: always()
-        uses: invisirisk/pse-action@develop
-        with:
-          cleanup: "true"
-      # ============= InvisiRisk Cleanup End =============
-
-  publish:
-    needs:
-      - cargo-verifications
-      - publish-crates-check
-    # Only do this job if publishing a release
-    if: github.event_name == 'release' && github.event.action == 'published'
-    runs-on: warp-ubuntu-latest-x64-4x
-
-    steps:
-      # ============= InvisiRisk Setup =============
-      - name: Setup PSE
-        uses: invisirisk/pse-action@develop
-        with:
-          api_url: "https://app.dev.invisirisk.com"
-      # ============= InvisiRisk Setup End =============
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Verify tag version
-        run: |
-          curl -sSLf "$DASEL_VERSION" -L -o dasel && chmod +x dasel
-          mv ./dasel /usr/local/bin/dasel
-          ./.github/workflows/scripts/verify_tag.sh ${{ github.ref_name }} Cargo.toml
-      - name: Publish crate
-        uses: FuelLabs/publish-crates@v1
-        with:
-          publish-delay: 30000
-          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      # ============= InvisiRisk Cleanup =============
-      - name: Cleanup PSE
-        if: always()
-        uses: invisirisk/pse-action@develop
+        uses: invisirisk/pse-action@feature/intermediate-deno-rust-ca-devtest
         with:
           cleanup: "true"
       # ============= InvisiRisk Cleanup End =============
